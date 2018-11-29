@@ -1,2 +1,3 @@
-# ML-Beyond-Activity-Recognition
-Repository containing the final project for the Practical Machine Learning course on Coursera
+# A Machine Learining Project: Beyond Activity Recognition
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify **how well they do it**. In this project, my goal is to predict the common mistakes commited(incorrect posture, technique etc.) by an athlete while preforming barbell lifts. 
