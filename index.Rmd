@@ -1,0 +1,239 @@
+---
+title: 'A Machine Learning Project: Beyond Activity Recognition'
+author: "Abhishek Bhat"
+date: "29 November 2018"
+output:
+    html_document:
+      keep_md: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction:
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify **how well they do it**. In this project, my goal is to predict the common mistakes commited(incorrect posture, technique etc.) by an athlete while preforming Dumbell Biceps Curls. 
+
+## The Data:
+
+For this project we use the data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions:
+
+1. **Class A:** Exactly according to the specifications.
+2. **Class B:** Throwing the elbows to the front. 
+3. **Class C:** Lifting the dumbbell only halfway. 
+4. **Class D:** Lowering the dumbbell only halfway.
+5. **Class E:** Throwing the hips to the front.
+
+Class A is the correct way of performing the exercise while the rest of the Classes represent some of the most common mistakes commited while performing Dumbell Biceps Curl.
+
+The Dataset consists of recordings from the devices present on the participants body and on the dumbell. Readings for some of the variables(related to skewness, kurtosis, etc.) are recorded at the end of a particular time window and not instantaneously.
+
+A more detailed information about data collection can be obtained from: http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf 
+
+## Loading the required Libraries and the Data:
+
+```{r message=FALSE}
+library(ggrepel)
+library(caret)
+library(randomForest)
+library(gbm)
+library(e1071)
+library(glmnet)
+library(MASS)
+```
+
+```{r}
+data<-read.csv("pml-training.csv", header = T)
+```
+
+
+## Cleaning the Data and Variable selection:
+
+```{r}
+dim(data)
+```
+
+The dataset consists of 19622 observations and 160 variables.
+
+Some of the variables in the dataset are the cummulative values for a particular time window. So these variables have valid entries only at the end of a particular time window and have NA values for the readings taken withing a time window.
+
+Variables of the type mentioned above are starting with the following keywords: 
+
+1. kurtosis
+2. skewness
+3. max
+4. min
+5. amplitude
+6. var
+7. avg
+8. stddev
+
+These variables give a cummulative measure of other variables whose measurements are recorded instantaneously. Hence these variables(the ones mentioned above) are closely related to the other variables in the dataset. So we eliminate all such variables containing cummulative readings.
+
+```{r}
+eliminate<-grepl("^kurtosis|^skewness|^max|^min|^amplitude|^var|^avg|^stddev", x = names(data))
+
+data<-data[,!eliminate]
+
+```
+
+Next we remove variables with observation no., username, timestamps and the ones indicating time windows. These variables correspond to the first seven columns in the dataset.
+
+```{r}
+
+data<-data[,-seq(1,7, by=1)]
+
+```
+
+## Modelling:
+
+The `classe` variable in the dataset corresponds to the various ways(correct and incorrect) of performing the exercise. We build a model to predict the `classe` variable.
+
+```{r}
+str(data$classe)
+```
+
+We will partition the dataset into 3 parts: *training*, *testing* and *validation*.
+
+We try build a stacked model. First we build a few base models on the training set. We make predictions with these models on the testing set. We then use these predictions and build a combined model.
+
+```{r}
+set.seed(123)  
+
+inBuild<-createDataPartition(data$classe, p = 0.7, list = F)
+
+validation<-data[-inBuild,]
+
+build<-data[inBuild,]
+
+inTrain<-createDataPartition(build$classe, p = 0.7, list = F)
+
+training<-build[inTrain,]
+
+testing<-build[-inTrain,]
+```
+
+### Base Level Models:
+
+We use a diverse set of base learners which will capture both the linear as well as non-linear aspects of the data.
+
+##### Random Forest(RF):
+
+```{r}
+modRF<-randomForest(classe~., data = training)
+
+predRF<-predict(modRF, newdata = testing) #Testing set predictions 
+
+```
+
+##### Gradient Boosting Machine(GBM):
+
+```{r message=FALSE}
+modBoost<-gbm(classe~., n.trees = 1000, data = training, distribution = "multinomial")
+
+predBoost<-predict(modBoost, n.trees = 1000, type = "response", newdata = testing) 
+predBoost<-apply(predBoost[,,1],1,which.max)
+predBoost<-factor(predBoost,labels = c("A","B","C","D","E")) #Testing set predictions 
+
+```
+
+
+##### Linear Discriminant Analysis(LDA):
+
+```{r}
+modLDA<-lda(classe~., data = training)
+
+predLDA<-predict(modLDA,newdata = testing) #Testing set predictions 
+
+```
+
+Below is an Accuracy table for the models under consideration:
+
+```{r}
+Accuracy<-c(confusionMatrix(predRF, testing$classe)$overall[1],
+            confusionMatrix(predBoost, testing$classe)$overall[1],
+            confusionMatrix(predLDA$class, testing$classe)$overal[1])
+
+Model<-c("RF", "GBM", "LDA")
+
+accDF<-data.frame(Model, Accuracy)
+
+accDF
+
+```
+
+RF, GBM are complex-nonlinear models and LDA is a linear model. We choose RF and LDA as our base models for the following reasons:
+
+1. RF performs better among the two complex-nonlinear models
+2. We expect LDA to capture the linear aspects of the data
+
+As a result our base models would not be highly correlated.
+
+We now combine the testing set predictions of the base models.
+
+```{r}
+predDF<-data.frame(predRF = predRF, predLDA = predLDA$class, 
+                   classe = testing$classe)
+
+head(predDF)
+```
+
+### Top Level Model:
+
+We will use GBM as our top level model which will be built on the predictions of base models
+on the testing set.
+
+```{r message=FALSE}
+
+modComb<-gbm(classe~predRF+predLDA, data = predDF, n.trees = 1000, 
+             distribution = "multinomial")
+
+```
+
+
+##### Performance of the Stacked Ensemble Model:
+
+We test the performance of our stacked model on the validation set.
+
+```{r}
+#Setting up the data frame for testing our stacked model
+
+predRF_val<-predict(modRF, newdata = validation) 
+
+predLDA_val<-predict(modLDA, newdata = validation)
+
+predDF_val<-data.frame(predRF = predRF_val, predLDA = predLDA_val$class, 
+                       classe = validation$classe)
+
+head(predDF_val)
+
+#Obtaining predictions of the stacked model on the validation set 
+
+predComb_val<-predict(modComb, newdata = predDF_val, n.trees = 1000)
+predComb_val<-apply(predComb_val[,,1],1,which.max)
+predComb_val<-factor(predComb_val,labels = c("A","B","C","D","E"))
+
+```
+
+Below is an Accuracy table of our stacked model as well as our base models for the validation set.
+
+```{r}
+Accuracy_val<-c(confusionMatrix(predRF_val, predDF_val$classe)$overall[1],
+                confusionMatrix(predLDA_val$class, predDF_val$classe)$overal[1],
+                confusionMatrix(predComb_val, predDF_val$classe)$overall[1])
+
+Model<-c("RF", "LDA", "Stacked Model")
+
+accDF_val<-data.frame(Model, Accuracy_val)
+
+accDF_val
+
+```
+
+## Conclusion:
+
+We observe that the  accuracy of Random Forest and the Stacked Model is the same on the validation set. Now as RF model is less expensive(computationally) than Stacked Model, we discard our Stacked model and settle down with `modRF` as our final model.
+
+**Reference:** The data for the project was obtained from the following source: http://groupware.les.inf.puc-rio.br/har
+
